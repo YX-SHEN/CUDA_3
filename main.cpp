@@ -38,6 +38,7 @@ int          maxIterations = 2000000000;
 unsigned int n             = 10;
 unsigned int samples       = 10;
 double       a = 0.0, b = 10.0;
+int          blockSize     = 128; // 默认block size, 可用-B修改
 
 /* ---------- helper --------------------------------------------------------- */
 inline double nowSeconds()
@@ -89,6 +90,7 @@ int main(int argc, char* argv[])
     vector<vector<float>>  gpuFloat (n, vector<float >(samples));
     vector<vector<double>> gpuDouble(n, vector<double>(samples));
     double gpu_total_time = 0.0;
+    double gpu_time_float = 0.0, gpu_time_double = 0.0;
 
     if(gpu_on){
         vector<float>  hx (samples);
@@ -110,8 +112,13 @@ int main(int argc, char* argv[])
         cudaMalloc((void**)&dyd_d, samples*sizeof(double));
 
         for(unsigned int order = 1; order <= n; ++order){
-            gpu::expint_gpu_float (order, dx_d , dy_d , samples);
-            gpu::expint_gpu_double(order, dxd_d, dyd_d, samples);
+            double t1 = nowSeconds();
+            gpu::expint_gpu_float (order, dx_d , dy_d , samples, blockSize);
+            gpu_time_float += (nowSeconds() - t1);
+
+            double t2 = nowSeconds();
+            gpu::expint_gpu_double(order, dxd_d, dyd_d, samples, blockSize);
+            gpu_time_double += (nowSeconds() - t2);
 
             cudaMemcpy(gpuFloat [order-1].data(), dy_d , samples*sizeof(float ),  cudaMemcpyDeviceToHost);
             cudaMemcpy(gpuDouble[order-1].data(), dyd_d, samples*sizeof(double), cudaMemcpyDeviceToHost);
@@ -135,6 +142,8 @@ int main(int argc, char* argv[])
 
     if(timing && gpu_on){
         printf("GPU total time (alloc+copy+all kernels+D2H+free): %.6f s\n", gpu_total_time);
+        printf("  - Float kernel time (total):  %.6f s\n", gpu_time_float);
+        printf("  - Double kernel time (total): %.6f s\n", gpu_time_double);
         if(cpu_on)
             printf("Speed-up (CPU/GPU): %.2fx\n", cpuTime / gpu_total_time);
     }
@@ -177,7 +186,7 @@ void outputResultsCpu(const vector<vector<float>>&  resF,
 int parseArguments(int argc, char** argv)
 {
     int opt;
-    while((opt = getopt(argc, argv, "cghn:m:a:b:tv")) != -1){
+    while((opt = getopt(argc, argv, "cghn:m:a:b:tvB:")) != -1){
         switch(opt){
             case 'c': cpu_on = false; break;
             case 'g': gpu_on = false; break;
@@ -187,6 +196,7 @@ int parseArguments(int argc, char** argv)
             case 'b': b = atof(optarg); break;
             case 't': timing  = true;  break;
             case 'v': verbose = true;  break;
+            case 'B': blockSize = atoi(optarg); break;
             case 'h': printUsage(); exit(0);
             default : printUsage(); exit(1);
         }
@@ -204,6 +214,7 @@ void printUsage()
     puts("  -g       : skip GPU");
     puts("  -n N     : highest order   (default 10)");
     puts("  -m M     : samples per order (default 10)");
+    puts("  -B value : block size for CUDA kernel (default 128)");
     puts("  -t       : timing");
     puts("  -v       : verbose (print tables)");
     puts("  -h       : this help");

@@ -3,9 +3,9 @@
 #include <cstdio>
 #include <cmath>
 
-// ======= 内存管理实现 =======
 namespace gpu {
 
+// 内存分配/释放
 void alloc_and_copy_to_device(const float* h_x, float*& d_x, int samples) {
     size_t bytes = samples * sizeof(float);
     cudaError_t err = cudaMalloc((void**)&d_x, bytes);
@@ -23,7 +23,7 @@ void alloc_and_copy_to_device(const double* h_x, double*& d_x, int samples) {
 void free_device(float* d_x) { if (d_x) cudaFree(d_x); }
 void free_device(double* d_x) { if (d_x) cudaFree(d_x); }
 
-// ======= CUDA kernel - float =======
+// CUDA核函数（float）
 __device__ float exponentialIntegralFloat_dev(const int n, const float x) {
     const float eulerConstant = 0.5772156649015329f;
     float epsilon = 1.E-30f;
@@ -66,13 +66,14 @@ __global__ void expint_kernel_float(int n, const float* x, float* out, int sampl
         out[idx] = exponentialIntegralFloat_dev(n, x[idx]);
 }
 
-void expint_gpu_float(const int n, const float* d_x, float* d_out, int samples) {
-    int block = 128, grid = (samples + block - 1) / block;
+void expint_gpu_float(const int n, const float* d_x, float* d_out, int samples, int blockSize) {
+    int block = blockSize > 0 ? blockSize : 128;
+    int grid  = (samples + block - 1) / block;
     expint_kernel_float<<<grid, block>>>(n, d_x, d_out, samples);
     cudaDeviceSynchronize();
 }
 
-// ======= CUDA kernel - double =======
+// CUDA核函数（double）
 __device__ double exponentialIntegralDouble_dev(const int n, const double x) {
     const double eulerConstant = 0.5772156649015329;
     double epsilon = 1.E-30;
@@ -115,10 +116,11 @@ __global__ void expint_kernel_double(int n, const double* x, double* out, int sa
         out[idx] = exponentialIntegralDouble_dev(n, x[idx]);
 }
 
-void expint_gpu_double(const int n, const double* d_x, double* d_out, int samples) {
-    int block = 128, grid = (samples + block - 1) / block;
+void expint_gpu_double(const int n, const double* d_x, double* d_out, int samples, int blockSize) {
+    int block = blockSize > 0 ? blockSize : 128;
+    int grid  = (samples + block - 1) / block;
     expint_kernel_double<<<grid, block>>>(n, d_x, d_out, samples);
     cudaDeviceSynchronize();
 }
 
-}
+} // namespace gpu
