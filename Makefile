@@ -1,15 +1,20 @@
-CXX = g++
-NVCC = nvcc
-CXXFLAGS = -O2 -std=c++11 -Wall -Iinclude
-NVFLAGS = -O2 -std=c++11 -arch=sm_70 -Iinclude
+# Makefile for expint_cuda project
 
-SRC = main.cpp
-CU_SRC = src/expint_gpu.cu
+NVCC      = nvcc
+CXX       = g++
+INCLUDES  = -Iinclude
+CFLAGS    = -O2 -std=c++11 -Wall
+NVFLAGS   = -O2 -std=c++11 -arch=sm_70
 
-all: bin/expint_exec
+SRC       = main.cpp src/expint_gpu.cu
+TARGET    = bin/expint_exec
 
-bin/expint_exec: $(SRC) $(CU_SRC) include/expint_cpu.hpp include/expint_gpu.hpp
-	$(NVCC) $(NVFLAGS) $(SRC) $(CU_SRC) -o bin/expint_exec
+all: $(TARGET)
+
+$(TARGET): $(SRC)
+	$(NVCC) $(NVFLAGS) $(INCLUDES) $^ -o $@
 
 clean:
 	rm -rf bin/expint_exec
+
+.PHONY: all clean

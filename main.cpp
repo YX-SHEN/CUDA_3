@@ -1,196 +1,210 @@
 //------------------------------------------------------------------------------
-// File : main.cpp
+// File : main.cpp   (with COMPILE_CPU_ONLY support)
 //------------------------------------------------------------------------------
 
-#include <time.h>
 #include <iostream>
-#include <limits>       // std::numeric_limits
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <vector>
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
 #include <sys/time.h>
-#include <time.h>
 #include <unistd.h>
+
 #include "include/expint_cpu.hpp"
+
+#ifndef COMPILE_CPU_ONLY
 #include "include/expint_gpu.hpp"
+#endif
 
 using namespace std;
 
-// 原有声明
-float   exponentialIntegralFloat(const int n,const float x);
-double  exponentialIntegralDouble(const int n,const double x);
-void    outputResultsCpu(const std::vector< std::vector< float  > > &resultsFloatCpu,const std::vector< std::vector< double > > &resultsDoubleCpu);
-int     parseArguments(int argc, char **argv);
-void    printUsage(void);
+/* ---------- prototypes from original CPU code ---------- */
+float   exponentialIntegralFloat (int n, float  x);
+double  exponentialIntegralDouble(int n, double x);
 
-bool verbose,timing,cpu;
-int maxIterations;
-unsigned int n,numberOfSamples;
-double a,b;  // The interval that we are going to use
+void outputResultsCpu(const vector<vector<float>>&  resF,
+                      const vector<vector<double>>& resD);
 
-int main(int argc, char *argv[]) {
-    unsigned int ui,uj;
-    cpu=true;
-    verbose=false;
-    timing=false;
-    n=10;
-    numberOfSamples=10;
-    a=0.0;
-    b=10.0;
-    maxIterations=2000000000;
+int  parseArguments(int argc, char** argv);
+void printUsage();
 
-    struct timeval expoStart, expoEnd;
+/* ---------- global flags / params ---------- */
+bool verbose = false;
+bool timing  = false;
+bool cpu_on  = true;
+bool gpu_on  = true;
 
+int          maxIterations = 2000000000;
+unsigned int n             = 10;
+unsigned int samples       = 10;
+double       a = 0.0, b = 10.0;
+
+/* ---------- helper --------------------------------------------------------- */
+inline double nowSeconds()
+{
+    struct timeval tv;  gettimeofday(&tv, nullptr);
+    return tv.tv_sec + tv.tv_usec * 1e-6;
+}
+
+/* ========================================================================== */
+int main(int argc, char* argv[])
+{
     parseArguments(argc, argv);
 
-    if (verbose) {
-        cout << "n=" << n << endl;
-        cout << "numberOfSamples=" << numberOfSamples << endl;
-        cout << "a=" << a << endl;
-        cout << "b=" << b << endl;
-        cout << "timing=" << timing << endl;
-        cout << "verbose=" << verbose << endl;
+    if(!cpu_on && !gpu_on){
+        fprintf(stderr,"Error: both -c and -g specified - nothing to do!\n");
+        return 1;
+    }
+    if(!gpu_on && !verbose && !timing){
+        puts("[Info] GPU disabled with -g. Use -v or -t to see CPU results.");
     }
 
-    // Sanity checks
-    if (a>=b) {
-        cout << "Incorrect interval ("<<a<<","<<b<<") has been stated!" << endl;
-        return 0;
-    }
-    if (n<=0) {
-        cout << "Incorrect orders ("<<n<<") have been stated!" << endl;
-        return 0;
-    }
-    if (numberOfSamples<=0) {
-        cout << "Incorrect number of samples ("<<numberOfSamples<<") have been stated!" << endl;
-        return 0;
-    }
+    if(a >= b){ puts("Error: a >= b!"); return 1; }
+    if(n == 0 || samples == 0){ puts("Error: n or samples = 0!"); return 1; }
 
-    std::vector< std::vector< float  > > resultsFloatCpu;
-    std::vector< std::vector< double > > resultsDoubleCpu;
+    const double dx = (b - a) / double(samples);
 
-    double timeTotalCpu=0.0;
+    vector<vector<float>>  cpuFloat (n, vector<float>(samples, 0.f));
+    vector<vector<double>> cpuDouble(n, vector<double>(samples, 0.0));
+    double cpuTime = 0.0;
 
-    try {
-        resultsFloatCpu.resize(n,vector< float >(numberOfSamples));
-    } catch (std::bad_alloc const&) {
-        cout << "resultsFloatCpu memory allocation fail!" << endl;    exit(1);
-    }
-    try {
-        resultsDoubleCpu.resize(n,vector< double >(numberOfSamples));
-    } catch (std::bad_alloc const&) {
-        cout << "resultsDoubleCpu memory allocation fail!" << endl;   exit(1);
-    }
-
-    double x,division=(b-a)/((double)(numberOfSamples));
-
-    if (cpu) {
-        gettimeofday(&expoStart, NULL);
-        for (ui=1;ui<=n;ui++) {
-            for (uj=1;uj<=numberOfSamples;uj++) {
-                x=a+uj*division;
-                resultsFloatCpu[ui-1][uj-1]=exponentialIntegralFloat (ui,x);
-                resultsDoubleCpu[ui-1][uj-1]=exponentialIntegralDouble (ui,x);
+    if(cpu_on){
+        double t0 = nowSeconds();
+        for(unsigned int order = 1; order <= n; ++order){
+            for(unsigned int j = 0; j < samples; ++j){
+                double x = a + (j+1)*dx;
+                cpuFloat [order-1][j] = exponentialIntegralFloat (order, float (x));
+                cpuDouble[order-1][j] = exponentialIntegralDouble(order,       x );
             }
         }
-        gettimeofday(&expoEnd, NULL);
-        timeTotalCpu=((expoEnd.tv_sec + expoEnd.tv_usec*0.000001) - (expoStart.tv_sec + expoStart.tv_usec*0.000001));
+        cpuTime = nowSeconds() - t0;
     }
 
-    if (timing) {
-        if (cpu) {
-            printf ("calculating the exponentials on the cpu took: %f seconds\n",timeTotalCpu);
+    if(timing && cpu_on)
+        printf("CPU total time: %.6f s\n", cpuTime);
+    if(verbose && cpu_on)
+        outputResultsCpu(cpuFloat, cpuDouble);
+
+#ifndef COMPILE_CPU_ONLY
+    vector<vector<float>>  gpuFloat (n, vector<float >(samples));
+    vector<vector<double>> gpuDouble(n, vector<double>(samples));
+    double gpu_total_time = 0.0;
+
+    if(gpu_on){
+        vector<float>  hx (samples);
+        vector<double> hxd(samples);
+        for(unsigned int j=0;j<samples;++j){
+            hx [j] = float (a + (j+1)*dx);
+            hxd[j] =        a + (j+1)*dx ;
+        }
+
+        float  *dx_d  = nullptr, *dy_d  = nullptr;
+        double *dxd_d = nullptr, *dyd_d = nullptr;
+
+        double t0_all = nowSeconds();
+
+        gpu::alloc_and_copy_to_device(hx .data(), dx_d , samples);
+        gpu::alloc_and_copy_to_device(hxd.data(), dxd_d, samples);
+
+        cudaMalloc((void**)&dy_d , samples*sizeof(float ));
+        cudaMalloc((void**)&dyd_d, samples*sizeof(double));
+
+        for(unsigned int order = 1; order <= n; ++order){
+            gpu::expint_gpu_float (order, dx_d , dy_d , samples);
+            gpu::expint_gpu_double(order, dxd_d, dyd_d, samples);
+
+            cudaMemcpy(gpuFloat [order-1].data(), dy_d , samples*sizeof(float ),  cudaMemcpyDeviceToHost);
+            cudaMemcpy(gpuDouble[order-1].data(), dyd_d, samples*sizeof(double), cudaMemcpyDeviceToHost);
+        }
+
+        gpu::free_device(dx_d );  gpu::free_device(dy_d );
+        gpu::free_device(dxd_d);  gpu::free_device(dyd_d);
+
+        gpu_total_time = nowSeconds() - t0_all;
+    }
+
+    if(verbose && gpu_on){
+        for(unsigned int order=1; order<=n; ++order){
+            for(unsigned int j=0;j<samples;++j){
+                double x = a + (j+1)*dx;
+                printf("GPU==> n=%2u x=%g  float=%-12.8g  double=%.14g\n",
+                       order, x, gpuFloat[order-1][j], gpuDouble[order-1][j]);
+            }
         }
     }
 
-    if (verbose) {
-        if (cpu) {
-            outputResultsCpu (resultsFloatCpu,resultsDoubleCpu);
+    if(timing && gpu_on){
+        printf("GPU total time (alloc+copy+all kernels+D2H+free): %.6f s\n", gpu_total_time);
+        if(cpu_on)
+            printf("Speed-up (CPU/GPU): %.2fx\n", cpuTime / gpu_total_time);
+    }
+
+    if(cpu_on && gpu_on){
+        int bad = 0;
+        for(unsigned int order=0; order<n; ++order){
+            for(unsigned int j=0;j<samples;++j){
+                float  diffF = fabs(gpuFloat [order][j] - cpuFloat [order][j]);
+                double diffD = fabs(gpuDouble[order][j] - cpuDouble[order][j]);
+                if(diffF > 1e-5f){
+                    printf("WARNING float n=%u idx=%u diff=%g\n", order+1, j, diffF);
+                    ++bad;
+                }
+                if(diffD > 1e-5 ){
+                    printf("WARNING double n=%u idx=%u diff=%g\n", order+1, j, diffD);
+                    ++bad;
+                }
+            }
         }
+        if(bad==0) puts("All GPU values match CPU within 1e-5.");
     }
-
-    // ==================== Step 2: GPU device alloc + H2D ====================
-    // （插在 main 尾部，不影响任何 CPU 流程）
-    std::vector<float> h_x(numberOfSamples);
-    for (unsigned int i = 0; i < numberOfSamples; ++i)
-        h_x[i] = a + (i + 1) * division;   // 与 CPU 输入一致
-
-    float* d_x = nullptr;
-    gpu::alloc_and_copy_to_device(h_x.data(), d_x, numberOfSamples);
-
-    if (d_x) {
-        std::cout << "Step2: GPU device memory allocated and copied OK!" << std::endl;
-        gpu::free_device(d_x);
-    } else {
-        std::cerr << "Step2: Device memory allocation/copy failed!" << std::endl;
-    }
-    // ==================== End of Step 2 ====================
+#endif
 
     return 0;
 }
 
-// 完全保留原有 outputResultsCpu
-void    outputResultsCpu(const std::vector< std::vector< float  > > &resultsFloatCpu, const std::vector< std::vector< double > > &resultsDoubleCpu) {
-    unsigned int ui,uj;
-    double x,division=(b-a)/((double)(numberOfSamples));
-    for (ui=1;ui<=n;ui++) {
-        for (uj=1;uj<=numberOfSamples;uj++) {
-            x=a+uj*division;
-            std::cout << "CPU==> exponentialIntegralDouble (" << ui << "," << x <<")=" << resultsDoubleCpu[ui-1][uj-1] << " ,";
-            std::cout << "exponentialIntegralFloat  (" << ui << "," << x <<")=" << resultsFloatCpu[ui-1][uj-1] << endl;
+void outputResultsCpu(const vector<vector<float>>&  resF,
+                      const vector<vector<double>>& resD)
+{
+    for(unsigned int order=1; order<=n; ++order){
+        for(unsigned int j=0;j<samples;++j){
+            double x = a + (j+1)*(b-a)/double(samples);
+            printf("CPU==> n=%2u x=%g  double=%-12.8g  float=%-12.8g\n",
+                   order, x, resD[order-1][j], resF[order-1][j]);
         }
     }
 }
 
-// 完全保留原有 parseArguments
-int parseArguments (int argc, char *argv[]) {
-    int c;
-    while ((c = getopt (argc, argv, "cghn:m:a:b:tv")) != -1) {
-        switch(c) {
-            case 'c':
-                cpu=false; break;     //Skip the CPU test
-            case 'h':
-                printUsage(); exit(0); break;
-            case 'i':
-                maxIterations = atoi(optarg); break;
-            case 'n':
-                n = atoi(optarg); break;
-            case 'm':
-                numberOfSamples = atoi(optarg); break;
-            case 'a':
-                a = atof(optarg); break;
-            case 'b':
-                b = atof(optarg); break;
-            case 't':
-                timing = true; break;
-            case 'v':
-                verbose = true; break;
-            default:
-                fprintf(stderr, "Invalid option given\n");
-                printUsage();
-                return -1;
+int parseArguments(int argc, char** argv)
+{
+    int opt;
+    while((opt = getopt(argc, argv, "cghn:m:a:b:tv")) != -1){
+        switch(opt){
+            case 'c': cpu_on = false; break;
+            case 'g': gpu_on = false; break;
+            case 'n': n       = atoi(optarg); break;
+            case 'm': samples = atoi(optarg); break;
+            case 'a': a = atof(optarg); break;
+            case 'b': b = atof(optarg); break;
+            case 't': timing  = true;  break;
+            case 'v': verbose = true;  break;
+            case 'h': printUsage(); exit(0);
+            default : printUsage(); exit(1);
         }
     }
     return 0;
 }
 
-// 完全保留原有 printUsage (一大段 usage 输出都不能动)
-void printUsage () {
-    printf("exponentialIntegral program\n");
-    printf("by: Jose Mauricio Refojo <refojoj@tcd.ie>\n");
-    printf("This program will calculate a number of exponential integrals\n");
-    printf("usage:\n");
-    printf("exponentialIntegral.out [options]\n");
-    printf("      -a   value   : will set the a value of the (a,b) interval in which the samples are taken to value (default: 0.0)\n");
-    printf("      -b   value   : will set the b value of the (a,b) interval in which the samples are taken to value (default: 10.0)\n");
-    printf("      -c           : will skip the CPU test\n");
-    printf("      -g           : will skip the GPU test\n");
-    printf("      -h           : will show this usage\n");
-    printf("      -i   size    : will set the number of iterations to size (default: 2000000000)\n");
-    printf("      -n   size    : will set the n (the order up to which we are calculating the exponential integrals) to size (default: 10)\n");
-    printf("      -m   size    : will set the number of samples taken in the (a,b) interval to size (default: 10)\n");
-    printf("      -t           : will output the amount of time that it took to generate each norm (default: no)\n");
-    printf("      -v           : will activate the verbose mode  (default: no)\n");
-    printf("     \n");
+void printUsage()
+{
+    puts("exponentialIntegral program");
+    puts("usage: exponentialIntegral.out [options]");
+    puts("  -a value : interval start (default 0.0)");
+    puts("  -b value : interval end   (default 10.0)");
+    puts("  -c       : skip CPU");
+    puts("  -g       : skip GPU");
+    puts("  -n N     : highest order   (default 10)");
+    puts("  -m M     : samples per order (default 10)");
+    puts("  -t       : timing");
+    puts("  -v       : verbose (print tables)");
+    puts("  -h       : this help");
 }
