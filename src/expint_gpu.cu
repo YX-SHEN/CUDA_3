@@ -2,6 +2,8 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cmath>
+#include <limits>
+#include <algorithm>
 
 // ---------- Global constant memory ----------
 __constant__ int const_n;
@@ -28,43 +30,76 @@ void alloc_and_copy_to_device(const double* h_x, double*& d_x, int samples) {
 void free_device(float* d_x) { if (d_x) cudaFree(d_x); }
 void free_device(double* d_x) { if (d_x) cudaFree(d_x); }
 
-// float 内核主体
-__device__ float exponentialIntegralFloat_dev(const int n, const float x) {
-    const float eulerConstant = 0.5772156649015329f;
-    float epsilon = 1.E-30f;
-    int i, ii, nm1 = n - 1;
-    float a, b, c, d, del, fact, h, psi, ans = 0.0f;
-
-    if (n == 0) return expf(-x) / x;
-
+// device-side precise En(x) (for float)
+__device__ float d_expint_impl_float(int n, float x) {
+    const float euler = 0.5772156649015329f;
+    const float eps = 1e-30f;
+    const float big = 3.4e38f;
+    const int maxIter = 10000;
+    if (n == 0) return expf(-x)/x;
+    int nm1 = n - 1;
     if (x > 1.0f) {
-        b = x + n; c = 3.4e38f; d = 1.0f / b; h = d;
-        for (i = 1; i <= 10000; i++) {
-            a = -i * (nm1 + i);
-            b += 2.0f;
+        float b = x + n, c = big, d = 1.0f / b, h = d;
+        for (int i = 1; i <= maxIter; ++i) {
+            float a = -i * (nm1 + i);
+            b += 2;
             d = 1.0f / (a * d + b);
             c = b + a / c;
-            del = c * d;
+            float del = c * d;
             h *= del;
-            if (fabsf(del - 1.0f) <= epsilon)
-                return h * expf(-x);
+            if (fabsf(del - 1.0f) <= eps) return h * expf(-x);
         }
         return h * expf(-x);
     } else {
-        ans = (nm1 != 0 ? 1.0f / nm1 : -logf(x) - eulerConstant);
-        fact = 1.0f;
-        for (i = 1; i <= 10000; i++) {
+        float ans = (nm1 ? 1.0f / nm1 : -logf(x) - euler);
+        float fact = 1.0f;
+        for (int i = 1; i <= maxIter; ++i) {
             fact *= -x / i;
-            if (i != nm1)
-                del = -fact / (i - nm1);
+            float del;
+            if (i != nm1) del = -fact / (i - nm1);
             else {
-                psi = -eulerConstant;
-                for (ii = 1; ii <= nm1; ii++) psi += 1.0f / ii;
+                float psi = -euler; for (int k = 1; k <= nm1; ++k) psi += 1.0f / k;
                 del = fact * (-logf(x) + psi);
             }
             ans += del;
-            if (fabsf(del) < fabsf(ans) * epsilon)
-                return ans;
+            if (fabsf(del) < fabsf(ans) * eps) return ans;
+        }
+        return ans;
+    }
+}
+
+__device__ double d_expint_impl_double(int n, double x) {
+    const double euler = 0.5772156649015328606;
+    const double eps = 1e-30;
+    const double big = 1e308;
+    const int maxIter = 10000;
+    if (n == 0) return exp(-x)/x;
+    int nm1 = n - 1;
+    if (x > 1.0) {
+        double b = x + n, c = big, d = 1.0 / b, h = d;
+        for (int i = 1; i <= maxIter; ++i) {
+            double a = -i * (nm1 + i);
+            b += 2;
+            d = 1.0 / (a * d + b);
+            c = b + a / c;
+            double del = c * d;
+            h *= del;
+            if (fabs(del - 1.0) <= eps) return h * exp(-x);
+        }
+        return h * exp(-x);
+    } else {
+        double ans = (nm1 ? 1.0 / nm1 : -log(x) - euler);
+        double fact = 1.0;
+        for (int i = 1; i <= maxIter; ++i) {
+            fact *= -x / i;
+            double del;
+            if (i != nm1) del = -fact / (i - nm1);
+            else {
+                double psi = -euler; for (int k = 1; k <= nm1; ++k) psi += 1.0 / k;
+                del = fact * (-log(x) + psi);
+            }
+            ans += del;
+            if (fabs(del) < fabs(ans) * eps) return ans;
         }
         return ans;
     }
@@ -82,7 +117,7 @@ __global__ void expint_kernel_float(const float* x, float* out, int samples) {
     __syncthreads();
 
     if (idx < samples)
-        out[idx] = exponentialIntegralFloat_dev(const_n, tile_x_float[tid]);
+        out[idx] = d_expint_impl_float(const_n, tile_x_float[tid]);
 }
 
 void expint_gpu_float(const int n, const float* d_x, float* d_out, int samples, int blockSize) {
@@ -101,49 +136,6 @@ void expint_gpu_float(const int n, const float* d_x, float* d_out, int samples, 
     cudaStreamDestroy(stream);
 }
 
-// double 内核主体
-__device__ double exponentialIntegralDouble_dev(const int n, const double x) {
-    const double eulerConstant = 0.5772156649015329;
-    double epsilon = 1.E-30;
-    int i, ii, nm1 = n - 1;
-    double a, b, c, d, del, fact, h, psi, ans = 0.0;
-
-    if (n == 0) return exp(-x) / x;
-
-    if (x > 1.0) {
-        b = x + n; c = 1e308; d = 1.0 / b; h = d;
-        for (i = 1; i <= 10000; i++) {
-            a = -i * (nm1 + i);
-            b += 2.0;
-            d = 1.0 / (a * d + b);
-            c = b + a / c;
-            del = c * d;
-            h *= del;
-            if (fabs(del - 1.0) <= epsilon)
-                return h * exp(-x);
-        }
-        return h * exp(-x);
-    } else {
-        ans = (nm1 != 0 ? 1.0 / nm1 : -log(x) - eulerConstant);
-        fact = 1.0;
-        for (i = 1; i <= 10000; i++) {
-            fact *= -x / i;
-            if (i != nm1)
-                del = -fact / (i - nm1);
-            else {
-                psi = -eulerConstant;
-                for (ii = 1; ii <= nm1; ii++) psi += 1.0 / ii;
-                del = fact * (-log(x) + psi);
-            }
-            ans += del;
-            if (fabs(del) < fabs(ans) * epsilon)
-                return ans;
-        }
-        return ans;
-    }
-}
-
-// double kernel（shared memory + constant + streams）
 __global__ void expint_kernel_double(const double* x, double* out, int samples) {
     extern __shared__ double tile_x_double[];
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -155,7 +147,7 @@ __global__ void expint_kernel_double(const double* x, double* out, int samples) 
     __syncthreads();
 
     if (idx < samples)
-        out[idx] = exponentialIntegralDouble_dev(const_n, tile_x_double[tid]);
+        out[idx] = d_expint_impl_double(const_n, tile_x_double[tid]);
 }
 
 void expint_gpu_double(const int n, const double* d_x, double* d_out, int samples, int blockSize) {
