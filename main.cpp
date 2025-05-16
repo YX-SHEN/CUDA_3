@@ -34,13 +34,11 @@ bool timing  = false;
 bool cpu_on  = true;
 bool gpu_on  = true;
 
-int          maxIterations = 2000000000;
 unsigned int n             = 10;
 unsigned int samples       = 10;
 double       a = 0.0, b = 10.0;
 int          blockSize     = 128; // 默认block size, 可用-B修改
 
-/* ---------- helper --------------------------------------------------------- */
 inline double nowSeconds()
 {
     struct timeval tv;  gettimeofday(&tv, nullptr);
@@ -65,14 +63,12 @@ int main(int argc, char* argv[])
 
     const double dx = (b - a) / double(samples);
 
-    // 1. 修正内存 shape：[n+1][samples]
     vector<vector<float>>  cpuFloat (n+1, vector<float>(samples, 0.f));
     vector<vector<double>> cpuDouble(n+1, vector<double>(samples, 0.0));
     double cpuTime = 0.0;
 
     if(cpu_on){
         double t0 = nowSeconds();
-        // 2. 修正主循环 order=0 ~ n（包括 E0）
         for(unsigned int order = 0; order <= n; ++order){
             for(unsigned int j = 0; j < samples; ++j){
                 double x = a + (j+1)*dx;
@@ -89,9 +85,11 @@ int main(int argc, char* argv[])
         outputResultsCpu(cpuFloat, cpuDouble);
 
 #ifndef COMPILE_CPU_ONLY
-    // 1. GPU 结果 shape 也同步 [n+1][samples]
-    vector<vector<float>>  gpuFloat (n+1, vector<float >(samples));
-    vector<vector<double>> gpuDouble(n+1, vector<double>(samples));
+    // ============ MULTI-N KERNEL 版本核心 ==============
+    // 单块连续输出，shape = [(n+1)*samples]
+    vector<float>  gpuFloat_flat ((n+1)*samples, 0.f);
+    vector<double> gpuDouble_flat((n+1)*samples, 0.0);
+
     double gpu_total_time = 0.0;
     double gpu_time_float = 0.0, gpu_time_double = 0.0;
 
@@ -111,28 +109,34 @@ int main(int argc, char* argv[])
         gpu::alloc_and_copy_to_device(hx .data(), dx_d , samples);
         gpu::alloc_and_copy_to_device(hxd.data(), dxd_d, samples);
 
-        cudaMalloc((void**)&dy_d , samples*sizeof(float ));
-        cudaMalloc((void**)&dyd_d, samples*sizeof(double));
+        cudaMalloc((void**)&dy_d , (n+1)*samples*sizeof(float ));
+        cudaMalloc((void**)&dyd_d, (n+1)*samples*sizeof(double));
 
-        // 2. 循环 order=0 ~ n，完整输出
-        for(unsigned int order = 0; order <= n; ++order){
-            double t1 = nowSeconds();
-            gpu::expint_gpu_float (order, dx_d , dy_d , samples, blockSize);
-            gpu_time_float += (nowSeconds() - t1);
+        double t1 = nowSeconds();
+        gpu::expint_gpu_multi_float (n, dx_d , dy_d , samples, blockSize);
+        gpu_time_float += (nowSeconds() - t1);
 
-            double t2 = nowSeconds();
-            gpu::expint_gpu_double(order, dxd_d, dyd_d, samples, blockSize);
-            gpu_time_double += (nowSeconds() - t2);
+        double t2 = nowSeconds();
+        gpu::expint_gpu_multi_double(n, dxd_d, dyd_d, samples, blockSize);
+        gpu_time_double += (nowSeconds() - t2);
 
-            cudaMemcpy(gpuFloat [order].data(), dy_d , samples*sizeof(float ),  cudaMemcpyDeviceToHost);
-            cudaMemcpy(gpuDouble[order].data(), dyd_d, samples*sizeof(double), cudaMemcpyDeviceToHost);
-        }
+        cudaMemcpy(gpuFloat_flat.data(),  dy_d , (n+1)*samples*sizeof(float ),  cudaMemcpyDeviceToHost);
+        cudaMemcpy(gpuDouble_flat.data(), dyd_d, (n+1)*samples*sizeof(double), cudaMemcpyDeviceToHost);
 
         gpu::free_device(dx_d );  gpu::free_device(dy_d );
         gpu::free_device(dxd_d);  gpu::free_device(dyd_d);
 
         gpu_total_time = nowSeconds() - t0_all;
     }
+
+    // for 输出和精度对比，还原成 [n+1][samples] 结构
+    vector<vector<float>>  gpuFloat (n+1, vector<float >(samples));
+    vector<vector<double>> gpuDouble(n+1, vector<double>(samples));
+    for(unsigned int order = 0; order <= n; ++order)
+        for(unsigned int j = 0; j < samples; ++j) {
+            gpuFloat [order][j] = gpuFloat_flat [j * (n+1) + order];
+            gpuDouble[order][j] = gpuDouble_flat[j * (n+1) + order];
+        }
 
     if(verbose && gpu_on){
         for(unsigned int order=0; order<=n; ++order){
@@ -152,7 +156,7 @@ int main(int argc, char* argv[])
             printf("Speed-up (CPU/GPU): %.2fx\n", cpuTime / gpu_total_time);
     }
 
-    // 3. 精度对比也修正为 order=0 ~ n
+    // 精度检查
     if (cpu_on && gpu_on) {
         int bad = 0;
         for (unsigned int order = 0; order <= n; ++order) {
@@ -163,12 +167,8 @@ int main(int argc, char* argv[])
                 if (diffD > 1e-5 ) ++bad;
             }
         }
-
-        // 始终输出一行汇总信息
         printf("[Precision Check] GPU vs CPU comparison: %s (threshold = 1e-5)\n",
                (bad == 0) ? "PASS" : "FAIL");
-
-        // 如需详细 diff，可加 verbose 控制
         if (bad > 0 && verbose) {
             for (unsigned int order = 0; order <= n; ++order) {
                 for (unsigned int j = 0; j < samples; ++j) {
@@ -189,7 +189,6 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-// 输出接口同理修正
 void outputResultsCpu(const vector<vector<float>>&  resF,
                       const vector<vector<double>>& resD)
 {
