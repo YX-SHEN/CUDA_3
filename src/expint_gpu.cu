@@ -70,7 +70,7 @@ __device__ float exponentialIntegralFloat_dev(const int n, const float x) {
     }
 }
 
-// float kernel（shared memory + constant）
+// float kernel（shared memory + constant + streams）
 __global__ void expint_kernel_float(const float* x, float* out, int samples) {
     extern __shared__ float tile_x_float[];
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -86,13 +86,19 @@ __global__ void expint_kernel_float(const float* x, float* out, int samples) {
 }
 
 void expint_gpu_float(const int n, const float* d_x, float* d_out, int samples, int blockSize) {
-    cudaMemcpyToSymbol(const_n, &n, sizeof(int));  // <<< constant memory copy
+    cudaMemcpyToSymbol(const_n, &n, sizeof(int));
 
     int block = blockSize > 0 ? blockSize : 128;
     int grid = (samples + block - 1) / block;
     size_t shared_mem_bytes = block * sizeof(float);
-    expint_kernel_float<<<grid, block, shared_mem_bytes>>>(d_x, d_out, samples);
-    cudaDeviceSynchronize();
+
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
+    expint_kernel_float<<<grid, block, shared_mem_bytes, stream>>>(d_x, d_out, samples);
+
+    cudaStreamSynchronize(stream);
+    cudaStreamDestroy(stream);
 }
 
 // double 内核主体
@@ -137,7 +143,7 @@ __device__ double exponentialIntegralDouble_dev(const int n, const double x) {
     }
 }
 
-// double kernel（shared memory + constant）
+// double kernel（shared memory + constant + streams）
 __global__ void expint_kernel_double(const double* x, double* out, int samples) {
     extern __shared__ double tile_x_double[];
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -153,13 +159,19 @@ __global__ void expint_kernel_double(const double* x, double* out, int samples) 
 }
 
 void expint_gpu_double(const int n, const double* d_x, double* d_out, int samples, int blockSize) {
-    cudaMemcpyToSymbol(const_n, &n, sizeof(int));  // <<< constant memory copy
+    cudaMemcpyToSymbol(const_n, &n, sizeof(int));
 
     int block = blockSize > 0 ? blockSize : 128;
     int grid = (samples + block - 1) / block;
     size_t shared_mem_bytes = block * sizeof(double);
-    expint_kernel_double<<<grid, block, shared_mem_bytes>>>(d_x, d_out, samples);
-    cudaDeviceSynchronize();
+
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
+    expint_kernel_double<<<grid, block, shared_mem_bytes, stream>>>(d_x, d_out, samples);
+
+    cudaStreamSynchronize(stream);
+    cudaStreamDestroy(stream);
 }
 
 }  // namespace gpu

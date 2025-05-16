@@ -1,3 +1,0 @@
-GPU total time (alloc+copy+all kernels+D2H+free): 1.042924 s
-  - Float kernel time (total):  0.072187 s
-  - Double kernel time (total): 0.663433 s
