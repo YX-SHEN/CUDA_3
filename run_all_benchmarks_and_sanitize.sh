@@ -16,13 +16,26 @@ done
 echo
 echo "[Sanitizer] Checking non-square configurations with compute-sanitizer..."
 
-# 非方阵1
-echo "[+] Sanitizing: -n 5000 -m 6000"
-$SANITIZER $EXEC -n 5000 -m 6000 -c -t > $LOGDIR/sanitizer_gpu_n5000_m6000.txt
-
-# 非方阵2
-echo "[+] Sanitizing: -n 8192 -m 4096"
-$SANITIZER $EXEC -n 8192 -m 4096 -c -t > $LOGDIR/sanitizer_gpu_n8192_m4096.txt
+# 非方阵测试
+NON_SQUARE_CASES=("5000 6000" "8192 4096")
+for case in "${NON_SQUARE_CASES[@]}"; do
+    set -- $case
+    n=$1; m=$2
+    echo "[+] Sanitizing: -n $n -m $m"
+    $SANITIZER $EXEC -n $n -m $m -c -t > $LOGDIR/sanitizer_gpu_n${n}_m${m}.txt
+done
 
 echo
-echo "[Done] All benchmarks and memory checks completed. Logs saved in $LOGDIR/"
+echo "[Grid Search] Running block size sweep for square benchmarks..."
+
+BLOCK_SIZES=(64 128 256 512 1024)
+for size in 5000 8192 16384 20000; do
+    for bsize in "${BLOCK_SIZES[@]}"; do
+        echo "[Sweep] -n $size -m $size -B $bsize"
+        $EXEC -n $size -m $size -c -t -B $bsize > $LOGDIR/sweep_n${size}_m${size}_B${bsize}.txt
+    done
+done
+
+echo
+echo "[Done] All benchmarks, sanitizer checks, and block sweeps completed."
+echo " Logs saved in $LOGDIR/"

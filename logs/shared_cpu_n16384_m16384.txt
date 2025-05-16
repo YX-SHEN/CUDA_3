@@ -1,1 +1,1 @@
-CPU total time: 27.130806 s
+CPU total time: 27.113404 s
