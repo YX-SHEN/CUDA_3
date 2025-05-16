@@ -29,9 +29,12 @@ inline void expint_gpu_double(const int n, const double* d_x, double* d_out, int
 void expint_gpu_multi_float (int nMax, const float*  d_x, float*  d_out, int samples, int blockSize);
 void expint_gpu_multi_double(int nMax, const double* d_x, double* d_out, int samples, int blockSize);
 
-// ----------- 新增：支持 Dual-Stream 重叠的入口 ----------
+// ----------- 支持 Dual-Stream 重叠 ----------
 void expint_float_array (int nMax, const float*  xIn, float*  out, int samples);
 void expint_double_array(int nMax, const double* xIn, double* out, int samples);
+
+// ----------- 新增：Dynamic Parallelism 支持 ----------
+void expint_gpu_dp_float(int nMax, const float* h_x, float* h_out, int samples);
 
 #endif
 
