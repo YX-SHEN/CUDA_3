@@ -15,6 +15,11 @@ $(TARGET): $(SRC)
 	$(NVCC) $(NVFLAGS) $(INCLUDES) $^ -o $@
 
 clean:
-	rm -rf bin/expint_exec
+	rm -rf bin/expint_exec \
+	       *.o src/*.o \
+	       logs/*.txt \
+	       *.ptx *.sass *.cubin *.fatbin \
+	       *.cu.cudafe* *.linkinfo *.mod.c \
+	       *.dSYM core.*
 
 .PHONY: all clean
