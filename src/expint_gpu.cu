@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cmath>
 
+// ---------- Global constant memory ----------
+__constant__ int const_n;
+
 namespace gpu {
 
 // 内存分配/释放
@@ -67,8 +70,8 @@ __device__ float exponentialIntegralFloat_dev(const int n, const float x) {
     }
 }
 
-// float kernel 使用 shared memory tile
-__global__ void expint_kernel_float(int n, const float* x, float* out, int samples) {
+// float kernel（shared memory + constant）
+__global__ void expint_kernel_float(const float* x, float* out, int samples) {
     extern __shared__ float tile_x_float[];
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
@@ -79,14 +82,16 @@ __global__ void expint_kernel_float(int n, const float* x, float* out, int sampl
     __syncthreads();
 
     if (idx < samples)
-        out[idx] = exponentialIntegralFloat_dev(n, tile_x_float[tid]);
+        out[idx] = exponentialIntegralFloat_dev(const_n, tile_x_float[tid]);
 }
 
 void expint_gpu_float(const int n, const float* d_x, float* d_out, int samples, int blockSize) {
+    cudaMemcpyToSymbol(const_n, &n, sizeof(int));  // <<< constant memory copy
+
     int block = blockSize > 0 ? blockSize : 128;
     int grid = (samples + block - 1) / block;
     size_t shared_mem_bytes = block * sizeof(float);
-    expint_kernel_float<<<grid, block, shared_mem_bytes>>>(n, d_x, d_out, samples);
+    expint_kernel_float<<<grid, block, shared_mem_bytes>>>(d_x, d_out, samples);
     cudaDeviceSynchronize();
 }
 
@@ -132,8 +137,8 @@ __device__ double exponentialIntegralDouble_dev(const int n, const double x) {
     }
 }
 
-// double kernel 使用 shared memory tile
-__global__ void expint_kernel_double(int n, const double* x, double* out, int samples) {
+// double kernel（shared memory + constant）
+__global__ void expint_kernel_double(const double* x, double* out, int samples) {
     extern __shared__ double tile_x_double[];
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
@@ -144,14 +149,16 @@ __global__ void expint_kernel_double(int n, const double* x, double* out, int sa
     __syncthreads();
 
     if (idx < samples)
-        out[idx] = exponentialIntegralDouble_dev(n, tile_x_double[tid]);
+        out[idx] = exponentialIntegralDouble_dev(const_n, tile_x_double[tid]);
 }
 
 void expint_gpu_double(const int n, const double* d_x, double* d_out, int samples, int blockSize) {
+    cudaMemcpyToSymbol(const_n, &n, sizeof(int));  // <<< constant memory copy
+
     int block = blockSize > 0 ? blockSize : 128;
     int grid = (samples + block - 1) / block;
     size_t shared_mem_bytes = block * sizeof(double);
-    expint_kernel_double<<<grid, block, shared_mem_bytes>>>(n, d_x, d_out, samples);
+    expint_kernel_double<<<grid, block, shared_mem_bytes>>>(d_x, d_out, samples);
     cudaDeviceSynchronize();
 }
 

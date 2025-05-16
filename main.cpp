@@ -148,24 +148,39 @@ int main(int argc, char* argv[])
             printf("Speed-up (CPU/GPU): %.2fx\n", cpuTime / gpu_total_time);
     }
 
-    if(cpu_on && gpu_on){
-        int bad = 0;
-        for(unsigned int order=0; order<n; ++order){
-            for(unsigned int j=0;j<samples;++j){
-                float  diffF = fabs(gpuFloat [order][j] - cpuFloat [order][j]);
+
+if (cpu_on && gpu_on) {
+    int bad = 0;
+    for (unsigned int order = 0; order < n; ++order) {
+        for (unsigned int j = 0; j < samples; ++j) {
+            float  diffF = fabs(gpuFloat[order][j] - cpuFloat[order][j]);
+            double diffD = fabs(gpuDouble[order][j] - cpuDouble[order][j]);
+            if (diffF > 1e-5f) ++bad;
+            if (diffD > 1e-5 ) ++bad;
+        }
+    }
+
+    // 始终输出一行汇总信息
+    printf("[Precision Check] GPU vs CPU comparison: %s (threshold = 1e-5)\n",
+           (bad == 0) ? "PASS" : "FAIL");
+
+    // 如需详细 diff，可加 verbose 控制
+    if (bad > 0 && verbose) {
+        for (unsigned int order = 0; order < n; ++order) {
+            for (unsigned int j = 0; j < samples; ++j) {
+                float  diffF = fabs(gpuFloat[order][j] - cpuFloat[order][j]);
                 double diffD = fabs(gpuDouble[order][j] - cpuDouble[order][j]);
-                if(diffF > 1e-5f){
+                if (diffF > 1e-5f)
                     printf("WARNING float n=%u idx=%u diff=%g\n", order+1, j, diffF);
-                    ++bad;
-                }
-                if(diffD > 1e-5 ){
+                if (diffD > 1e-5)
                     printf("WARNING double n=%u idx=%u diff=%g\n", order+1, j, diffD);
-                    ++bad;
-                }
             }
         }
-        if(bad==0) puts("All GPU values match CPU within 1e-5.");
+        printf("Number of mismatches exceeding threshold: %d\n", bad);
     }
+}
+
+
 #endif
 
     return 0;
